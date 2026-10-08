@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import huggingface_hub
+import pytest
 import yaml
 
 from sglang_omni.utils.checkpoint import resolve_checkpoint
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(autouse=True)
+def clear_resolve_checkpoint_cache() -> Iterator[None]:
+    resolve_checkpoint.cache_clear()
+    yield
+    resolve_checkpoint.cache_clear()
 
 
 def test_resolve_checkpoint_returns_local_directory(tmp_path) -> None:
@@ -40,6 +49,42 @@ def test_resolve_checkpoint_honors_pinned_revision(monkeypatch) -> None:
 
     assert resolve_checkpoint("org/model@abc123") == "/snapshots/pinned"
     assert captured == {"repo_id": "org/model", "revision": "abc123"}
+
+
+def test_resolve_checkpoint_resolves_each_spec_once(monkeypatch) -> None:
+    resolved: list[str] = []
+
+    def fake_snapshot_download(repo_id, revision=None):
+        resolved.append(repo_id)
+        return f"/snapshots/{repo_id}"
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+
+    assert resolve_checkpoint("org/model") == "/snapshots/org/model"
+    assert resolve_checkpoint("org/model") == "/snapshots/org/model"
+    assert resolved == ["org/model"]
+
+    assert resolve_checkpoint("org/other") == "/snapshots/org/other"
+    assert resolved == ["org/model", "org/other"]
+
+
+def test_resolve_checkpoint_retries_after_a_failed_resolution(monkeypatch) -> None:
+    attempts: list[str] = []
+
+    def flaky_snapshot_download(repo_id, revision=None):
+        attempts.append(repo_id)
+        if len(attempts) == 1:
+            raise OSError("hub unreachable")
+        else:
+            pass
+        return "/snapshots/recovered"
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", flaky_snapshot_download)
+
+    with pytest.raises(OSError):
+        resolve_checkpoint("org/model")
+    assert resolve_checkpoint("org/model") == "/snapshots/recovered"
+    assert attempts == ["org/model", "org/model"]
 
 
 def test_pinned_spec_resolves_architecture_without_snapshot(
@@ -85,8 +130,6 @@ def test_pinned_spec_resolves_architecture_without_snapshot(
 
 
 def test_unresolvable_pinned_spec_names_the_revision(monkeypatch) -> None:
-    import pytest
-
     from sglang_omni.config import manager
 
     def fail_metadata(*args, **kwargs):

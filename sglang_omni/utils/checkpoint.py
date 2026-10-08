@@ -4,9 +4,16 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 
 
+@lru_cache(maxsize=None)
 def resolve_checkpoint(checkpoint: str) -> str:
+    """Resolve a checkpoint spec to a local directory.
+
+    Memoized because stages sharing a process each resolve the same spec,
+    and every repeat call costs a Hub revalidation round trip at startup.
+    """
     if os.path.isdir(checkpoint):
         return checkpoint
     else:

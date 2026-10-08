@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 import torch
@@ -25,13 +24,8 @@ class TTMCheckpointPaths:
     dav_path: Path
 
 
-@lru_cache(maxsize=None)
-def download_once(model_path: str) -> str:
-    return _resolve_source(model_path)
-
-
 def resolve_checkpoint(model_path: str | Path) -> TTMCheckpointPaths:
-    root = Path(download_once(str(Path(model_path).expanduser()))).expanduser()
+    root = Path(_resolve_source(str(Path(model_path).expanduser()))).expanduser()
     direct_qwen = root / "qwen_7B" / "qwen_7B"
     direct_dit = root / "flowmatching_vae.pth"
     if not (direct_qwen.is_dir() and direct_dit.exists()) and root.is_dir():
